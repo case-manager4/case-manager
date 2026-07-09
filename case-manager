@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Case-Manager - Digital Forensics Case Lifecycle Tool (Pure Bash)
+# Repository: T3rmx/case-manager
+# ==============================================================================
+
+# Output styling colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+VERSION="1.0.0"
+
+# Error logging to stderr
+log_error() {
+    echo -e "${RED}[-] Error: $1${NC}" >&2
+}
+
+# Success logging to stdout
+log_success() {
+    echo -e "${GREEN}[+] $1${NC}"
+}
+
+# Prompt logging to stdout
+log_prompt() {
+    echo -e "${YELLOW}[?] $1${NC}"
+}
+
+# Input and Name Validation (Alphanumeric, dots, hyphens, underscores only)
+validate_name() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        log_error "Case name cannot be empty."
+        exit 1
+    fi
+    if [[ "$name" =~ / ]]; then
+        log_error "Case name cannot contain slashes '/' (prevents path traversal)."
+        exit 1
+    fi
+    if [[ "$name" =~ ^\. ]]; then
+        log_error "Case name cannot start with a dot '.' (prevents hidden directories)."
+        exit 1
+    fi
+    if [[ "$name" =~ [[:space:]] ]]; then
+        log_error "Case name cannot contain spaces. Use hyphens or underscores instead."
+        exit 1
+    fi
+    # Alphanumeric only verification (letters, numbers, dots, hyphens, underscores)
+    if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        log_error "Invalid characters in name. Use alphanumeric, dots, hyphens, or underscores only."
+        exit 1
+    fi
+}
+
+# Usage help menu
+show_help() {
+    echo "Case-Manager - Digital Forensics Case Lifecycle Tool"
+    echo "Usage: case-manager <command> [options] [arguments]"
+    echo ""
+    echo "Commands:"
+    echo "  create <name>            Create a new structured case directory with subdirectories"
+    echo "  open                     Open the latest case in your file manager"
+    echo "  list                     List all cases with last-modified timestamps"
+    echo "  archive <name>           Compress a case into .tar.gz"
+    echo "  delete [--force] <name>  Delete a case directory (prompts for confirmation)"
+    echo "  rename <old> <new>       Rename a case directory"
+    echo "  status <name>            Show case details, size, and directory statistics"
+    echo "  help                     Show full help with examples"
+    echo "  version                  Show version information"
+}
+
+# Command: create
+cmd_create() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        log_error "Missing required argument: case name."
+        show_help
+        exit 1
+    fi
+    validate_name "$name"
+
+    if [[ -d "$name" ]]; then
+        log_error "Case '$name' already exists!"
+        exit 1
+    fi
+
+    # Create subdirectories directly using mkdir expansion
+    mkdir -p "$name"/{images,reports,logs,evidence} 2>/dev/null
+    if [[ $? -ne 0 ]]; then
+        log_error "mkdir failure: Failed to create directories. Check permissions."
+        exit 1
+    fi
+
+    log_success "Created main case directory: $name"
+    echo "    ├── images/     # Forensic images, screenshots, photos"
+    echo "    ├── reports/    # Investigation reports, findings"
+    echo "    ├── logs/       # System logs, audit trails"
+    echo "    └── evidence/   # Collected evidence files"
+    log_success "Case structured successfully!\n"
+}
+
+# Command: open (File manager fallback logic)
+cmd_open() {
+    local latest_case
+    latest_case=$(find . -maxdepth 1 -type d ! -path '.' ! -path './.*' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+   
+    if [[ -z "$latest_case" ]]; then
+        log_error "No case directories found in the current folder."
+        exit 1
+    fi
+    latest_case="${latest_case#./}"
+
+    log_success "Found latest case: '$latest_case'"
+    log_success "Opening '$latest_case' in file manager..."
+
+    # Sequential check for available file managers as specified in your repository
+    if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$latest_case" >/dev/null 2>&1 &
+    elif command -v thunar >/dev/null 2>&1; then
+        thunar "$latest_case" >/dev/null 2>&1 &
+    elif command -v nautilus >/dev/null 2>&1; then
+        nautilus "$latest_case" >/dev/null 2>&1 &
+    elif command -v dolphin >/dev/null 2>&1; then
+        dolphin "$latest_case" >/dev/null 2>&1 &
+    elif command -v nemo >/dev/null 2>&1; then
+        nemo "$latest_case" >/dev/null 2>&1 &
+    else
+        log_error "File manager not found. Tried: xdg-open, thunar, nautilus, dolphin, nemo."
+        exit 1
+    fi
+}
+
+# Command: list
+cmd_list() {
+    local count=0
+    printf "%-30s | %s\n" "Case Name" "Last Modified"
+    echo "------------------------------------------------------------"
+
+    # Enforce hidden folder bypass safely
+    for dir in *; do
+        if [[ -d "$dir" && ! "$dir" =~ ^\. ]]; then
+            ((count++))
+            local timestamp
+            timestamp=$(stat -c '%y' "$dir" 2>/dev/null | cut -d. -f1)
+            printf "%-30s | %s\n" "$dir" "$timestamp"
+        fi
+    done
+
+    if [[ $count -eq 0 ]]; then
+        echo "No cases found."
+    else
+        echo "------------------------------------------------------------"
+        log_success "Total: $count cases"
+    fi
+}
+
+# Command: archive
+cmd_archive() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        log_error "Missing required argument: case name."
+        exit 1
+    fi
+
+    if [[ ! -d "$name" ]]; then
+        log_error "Case '$name' does not exist!"
+        exit 1
+    fi
+
+    local archive_filename="${name}.tar.gz"
+    if [[ -f "$archive_filename" ]]; then
+        log_error "Archive already exists: '$archive_filename'."
+        exit 1
+    fi
+
+    log_success "Archiving and compressing '$name' into '$archive_filename'..."
+    tar -czf "$archive_filename" "$name" 2>/dev/null
+    if [[ $? -eq 0 ]]; then
+        log_success "Case '$name' archived successfully as '$archive_filename'!\n"
+    else
+        log_error "tar failure: Failed to create archive."
+        exit 1
+    fi
+}
+
+# Command: delete (Matches: delete [--force] <name>)
+cmd_delete() {
+    local arg1="$1"
+    local arg2="$2"
+    local name=""
+    local force=0
+
+    # Parsing options exactly according to repository requirements
+    if [[ "$arg1" == "--force" ]]; then
+        force=1
+        name="$arg2"
+    else
+        name="$arg1"
+    fi
+
+    if [[ -z "$name" ]]; then
+        log_error "Missing required argument: case name."
+        exit 1
+    fi
+
+    if [[ ! -d "$name" ]]; then
+        log_error "Case '$name' does not exist!"
+        exit 1
+    fi
+
+    if [[ $force -eq 1 ]]; then
+        rm -rf "$name" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+            log_success "Case '$name' deleted forcefully."
+        else
+            log_error "rm failure: Failed to delete '$name'."
+            exit 1
+        fi
+    else
+        log_prompt "Are you sure you want to delete case '$name'? (y/N): "
+        read -r response
+        if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            rm -rf "$name" 2>/dev/null
+            if [[ $? -eq 0 ]]; then
+                log_success "Case '$name' deleted successfully."
+            else
+                log_error "rm failure: Failed to delete '$name'."
+                exit 1
+            fi
+        else
+            echo "[*] Deletion cancelled."
+        fi
+    fi
+}
+
+# Command: rename
+cmd_rename() {
+    local old_name="$1"
+    local new_name="$2"
+
+    if [[ -z "$old_name" || -z "$new_name" ]]; then
+        log_error "Missing required arguments. Usage: case-manager rename <old> <new>"
+        exit 1
+    fi
+
+    if [[ ! -d "$old_name" ]]; then
+        log_error "Case '$old_name' does not exist!"
+        exit 1
+    fi
+
+    validate_name "$new_name"
+
+    if [[ -d "$new_name" ]]; then
+        log_error "Case '$new_name' already exists!"
+        exit 1
+    fi
+
+    mv "$old_name" "$new_name" 2>/dev/null
+    if [[ $? -eq 0 ]]; then
+        log_success "Successfully renamed case '$old_name' to '$new_name'."
+    else
+        log_error "mv failure: Failed to rename directory."
+        exit 1
+    fi
+}
+
+# Command: status
+cmd_status() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        log_error "Missing required argument: case name."
+        exit 1
+    fi
+
+    if [[ ! -d "$name" ]]; then
+        log_error "Case '$name' does not exist!"
+        exit 1
+    fi
+
+    echo "=== Case Status: $name ==="
+    echo "Location: $(pwd)/$name"
+   
+    local total_size
+    total_size=$(du -sh "$name" 2>/dev/null | awk '{print $1}')
+    echo "Total Size: $total_size"
+    echo "Subdirectory File Counts:"
+
+    for subdir in "images" "reports" "logs" "evidence"; do
+        if [[ -d "$name/$subdir" ]]; then
+            local file_count
+            file_count=$(find "$name/$subdir" -type f 2>/dev/null | wc -l)
+            echo "  ├── $subdir: $file_count file(s)"
+        else
+            echo "  ├── $subdir: MISSING!"
+        fi
+    done
+}
+
+# Core main entry routing logic
+if [[ $# -lt 1 ]]; then
+    log_error "No command provided."
+    show_help
+    exit 1
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    create)
+        cmd_create "$1"
+        ;;
+    open)
+        cmd_open
+        ;;
+    list)
+        cmd_list
+        ;;
+    archive)
+        cmd_archive "$1"
+        ;;
+    delete)
+        cmd_delete "$1" "$2"
+        ;;
+    rename)
+        cmd_rename "$1" "$2"
+        ;;
+    status)
+        cmd_status "$1"
+        ;;
+    help|--help)
+        show_help
+        ;;
+    version|--version)
+        echo "Case-Manager Version: $VERSION"
+        ;;
+    *)
+        log_error "Unknown command '$COMMAND'."
+        echo "Use 'case-manager help' for usage details."
+        exit 1
+        ;;
+esac
