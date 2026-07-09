@@ -25,7 +25,7 @@ mistakes.
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/T3rmx/case-manager/main/case-manager
+curl -O https://raw.githubusercontent.com/case-manager4/case-manager/main/case-manager
 
 # Make executable
 chmod +x case-manager
@@ -174,7 +174,4 @@ test/
 ```
 
 ---
-
-## License
-
-See repository for license details.
+This tool make it Ing.auday and the dev T3rmx make it beater 
