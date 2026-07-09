@@ -207,6 +207,17 @@ teardown() {
     [ "$status" -eq 1 ]
 }
 
+@test "rename refuses an invalid (slashed) old name" {
+    local outside
+    outside="$(mktemp -d)/outside_dir"
+    mkdir -p "$outside"
+    run bash "$SCRIPT" rename "$outside" moved
+    [ "$status" -eq 1 ]
+    # The outside directory must NOT have been relocated into the case folder.
+    [ -d "$outside" ]
+    rm -rf "$(dirname "$outside")"
+}
+
 # ---- open ----
 
 @test "open fails gracefully when there are no cases" {

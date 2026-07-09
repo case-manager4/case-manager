@@ -47,7 +47,7 @@ log_prompt() {
 # outside [a-zA-Z0-9._-]. This is the single chokepoint that prevents
 # path-traversal / arbitrary-delete hazards across every command.
 validate_name() {
-    local name="$1"
+    local name="${1:-}"
     if [[ -z "$name" ]]; then
         log_error "Case name cannot be empty."
         exit 1
@@ -283,6 +283,9 @@ cmd_rename() {
         log_error "Case '$old_name' does not exist!"
         exit 1
     fi
+
+    # Sanitize the old name too, so a slashed/relative path can't be moved.
+    validate_name "$old_name"
 
     validate_name "$new_name"
 
